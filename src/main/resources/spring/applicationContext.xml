@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xmlns:context="http://www.springframework.org/schema/context"
+       xmlns="http://www.springframework.org/schema/beans"
+       xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd
+
+       http://www.springframework.org/schema/context http://www.springframework.org/schema/context/spring-context.xsd">
+
+    <context:property-placeholder location="classpath:*.properties" ignore-unresolvable="true"/>
+    <context:annotation-config/>
+    <context:component-scan base-package="com.demai"/>
+
+
+    <bean id="service" name="service" class="org.apache.axis.client.Service"/>
+
+    <bean id="smsUtil" name="smsUtil" class="com.demai.utils.SMSUtil">
+        <property name="userName" value="${sms.username}"/>
+        <property name="password" value="${sms.password}"/>
+        <property name="soapAction" value="${sms.soapAction}"/>
+        <property name="namespace" value="${sms.namespace}"/>
+        <property name="service" ref="service"/>
+        <property name="URL" value="${sms.url}"/>
+        <property name="action" value="${sms.action}"/>
+    </bean>
+
+
+    <bean id="msgConsumer" name="msgConsumer" class="com.demai.rabbitmq.MsgConsumer">
+        <property name="userName" value="${server.rabbitmq.username}"/>
+        <property name="pwd" value="${server.rabbitmq.password}"/>
+        <property name="queueName" value="${server.rabbitmq.queuename}"/>
+        <property name="host" value="${server.rabbitmq.host}"/>
+        <property name="port" value="${server.rabbitmq.port}"/>
+        <property name="exchangeName" value="${server.rabbitmq.exchangename}"/>
+        <property name="smsUtil" ref="smsUtil"/>
+
+    </bean>
+    <!--<bean id="taskExecutor" class="org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor">  -->
+    <!--<property name="corePoolSize" value="5" />  -->
+    <!--<property name="maxPoolSize" value="50" />  -->
+    <!--<property name="WaitForTasksToCompleteOnShutdown" value="true" />  -->
+    <!--</bean>-->
+
+</beans>
