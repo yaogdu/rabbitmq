@@ -1,1 +1,1 @@
-#### sms_consumer
+#### rabbitmq consumer
