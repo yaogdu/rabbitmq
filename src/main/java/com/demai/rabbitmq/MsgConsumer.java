@@ -22,11 +22,15 @@ public class MsgConsumer {
 
 
     private final static Logger logger = LoggerFactory.getLogger(MsgConsumer.class);
+    private static Connection connection;
 
+    private static Channel channel;
 
     private SMSUtil smsUtil;
 
-    ExecutorService es = Executors.newFixedThreadPool(20);
+    QueueingConsumer consumer;
+
+    ExecutorService es = Executors.newFixedThreadPool(5);
 
     private ConnectionFactory factory;
 
@@ -110,6 +114,8 @@ public class MsgConsumer {
     private String exchangeName;
 
 
+    boolean run = false;
+
     /**
      * 初始化 rabbitmq factory
      *
@@ -123,109 +129,35 @@ public class MsgConsumer {
             factory.setPort(getPort());
             factory.setHost(getHost());
             factory.setAutomaticRecoveryEnabled(true);
-            factory.setNetworkRecoveryInterval(10000);
-            factory.setRequestedHeartbeat(5);
+            factory.setConnectionTimeout(1000);
+            factory.setNetworkRecoveryInterval(10);
+            factory.setRequestedHeartbeat(10);
+            factory.setTopologyRecoveryEnabled(true);
+            connection = factory.newConnection(es);
+            channel = connection.createChannel(10);
+
+            channel.exchangeDeclare(exchangeName, "direct", true);
+            logger.info("queueName is {}", queueName);
+            Map<String, Object> args = new HashMap<>();
+            args.put("x-max-priority", 10);//定义优先级
+            channel.queueDeclare(queueName, true, false, false, args);//durable,exclusive,autodelete
+            channel.queueBind(queueName, exchangeName, "");
+            channel.basicQos(100);
+            consumer = new QueueingConsumer(channel);
+            channel.basicConsume(queueName, false, consumer);
+
+            run =true;
+            logger.info("facetory inited successfully..");
         } catch (Exception e) {
-            logger.error("channelRecovery error occurred", e);
+            try {
+                Thread.sleep(factory.getNetworkRecoveryInterval()*1000);
+                logger.error("channelRecovery error occurred", e);
+                channelRecovery();
+            } catch (InterruptedException e1) {
+                logger.error("init factory error", e);
+                channelRecovery();
+            }
         }
-
-    }
-
-
-    private void factoryExceptionHandle() {
-        //exception 处理
-        factory.setExceptionHandler(new ExceptionHandler() {//exception handler for recovery
-            @Override
-            public void handleUnexpectedConnectionDriverException(Connection connection, Throwable throwable) {
-                try {
-                    logger.info("connection recovery");
-                    connection = factory.newConnection(es);
-                } catch (IOException e) {
-                    logger.error("handleUnexpectedConnectionDriverException connection failed", e);
-                } catch (TimeoutException e) {
-                    logger.error("handleUnexpectedConnectionDriverException connection failed", e);
-                }
-            }
-
-            @Override
-            public void handleReturnListenerException(Channel channel, Throwable throwable) {
-                try {
-                    logger.info("channel recovery");
-                    channelRecovery();
-                } catch (IOException e) {
-                    logger.error("handleUnexpectedConnectionDriverException channel failed", e);
-                }
-            }
-
-            @Override
-            public void handleFlowListenerException(Channel channel, Throwable throwable) {
-                try {
-                    logger.info("channel recovery");
-                    channelRecovery();
-                } catch (IOException e) {
-                    logger.error("handleUnexpectedConnectionDriverException channel failed", e);
-                }
-            }
-
-            @Override
-            public void handleConfirmListenerException(Channel channel, Throwable throwable) {
-                try {
-                    logger.info("channel recovery");
-                    channelRecovery();
-                } catch (IOException e) {
-                    logger.error("handleUnexpectedConnectionDriverException channel failed", e);
-                }
-            }
-
-            @Override
-            public void handleBlockedListenerException(Connection connection, Throwable throwable) {
-                try {
-                    logger.info("connection recovery");
-                    connection = factory.newConnection(es);
-                } catch (IOException e) {
-                    logger.error("handleUnexpectedConnectionDriverException connection failed", e);
-                } catch (TimeoutException e) {
-                    logger.error("handleUnexpectedConnectionDriverException connection failed", e);
-                }
-            }
-
-            @Override
-            public void handleConsumerException(Channel channel, Throwable throwable, Consumer consumer, String s, String s1) {
-                try {
-                    logger.info("customer recovery");
-                    consumer = new QueueingConsumer(channel);//MsgConsumer
-                } catch (Exception e) {
-                    logger.error("handleUnexpectedConnectionDriverException channel failed", e);
-                }
-            }
-
-            @Override
-            public void handleConnectionRecoveryException(Connection connection, Throwable throwable) {
-                try {
-                    logger.info("connection recovery");
-                    connection = factory.newConnection(es);
-                } catch (IOException e) {
-                    logger.error("handleUnexpectedConnectionDriverException connection failed", e);
-                } catch (TimeoutException e) {
-                    logger.error("handleUnexpectedConnectionDriverException connection failed", e);
-                }
-            }
-
-            @Override
-            public void handleChannelRecoveryException(Channel channel, Throwable throwable) {
-                try {
-                    logger.info("channel recovery");
-                    channelRecovery();
-                } catch (IOException e) {
-                    logger.error("handleUnexpectedConnectionDriverException channel failed", e);
-                }
-            }
-
-            @Override
-            public void handleTopologyRecoveryException(Connection connection, Channel channel, TopologyRecoveryException e) {
-
-            }
-        });
 
     }
 
@@ -237,27 +169,15 @@ public class MsgConsumer {
     private void consume() throws IOException {
         try {
 
-            Connection connection = factory.newConnection();
-            final Channel channel = connection.createChannel(10);
-            channel.exchangeDeclare(exchangeName, "direct", true);
-            logger.info("queueName is {}", queueName);
-            Map<String, Object> args = new HashMap<>();
-            args.put("x-max-priority", 10);//定义优先级
-            channel.queueDeclare(queueName, true, false, false, args);//durable,exclusive,autodelete
-            channel.queueBind(queueName, exchangeName, "");
-            channel.basicQos(100);
-            final QueueingConsumer consumer = new QueueingConsumer(channel);
-
-            channel.basicConsume(queueName, false, consumer);
-
             es.execute(new Runnable() {
 
                 @Override
                 public void run() {
-                    while (true) {
+                    while (run) {
                         String message = null;
                         QueueingConsumer.Delivery delivery = null;
                         try {
+                            logger.info("ready to receive...");
                             delivery = consumer.nextDelivery();
                             message = new String(delivery.getBody(), "utf-8");
                             if (!StringUtils.isEmpty(message)) {
@@ -268,14 +188,17 @@ public class MsgConsumer {
                                 logger.info("ack msg {}", message);
                             }
                         } catch (InterruptedException | ShutdownSignalException | ConsumerCancelledException cce) {//channel Recovery
+                            logger.error("connection error", cce);
                             try {
+                                run  = false;
                                 channelRecovery();
                                 logger.info("trying to recovery connection and channel");
                             } catch (Exception e) {
-                                logger.info("channel Recovery error", e);
+                                logger.error("channel Recovery error", e);
                             }
                         } catch (Exception e) {//channelRecovery and nack msg in order to requeue it.
                             try {
+                                run  = false;
                                 channelRecovery();
                                 if (delivery != null) {//requeue the message after consumeMessage error
                                     channel.basicNack(delivery.getEnvelope().getDeliveryTag(), false, true);//requeue
@@ -290,8 +213,6 @@ public class MsgConsumer {
                 }
             });
 
-        } catch (TimeoutException e) {
-            logger.error("connection creation error", e);
         } catch (Exception e) {
             logger.error("receiver init channel error", e);
         }
@@ -308,7 +229,7 @@ public class MsgConsumer {
         try {
 
             channelRecovery();//init channel and MsgConsumer
-            factoryExceptionHandle();
+            //factoryExceptionHandle();
             consume();
         } catch (Exception e) {
             logger.error("error occurred when invoking msgConsumer", e);
